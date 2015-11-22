@@ -1,0 +1,201 @@
+---
+title: "Course Project for Practical Machine Learning: Human Activity Recognition"
+author: "Kabjin Kwon"
+output: html_document
+---
+
+#Overall Procedure Synopsis
+
+I expected that the out of sample error to be more than expected from in sample error.
+I estimated the error with cross-validation method.
+
+Used [Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har) dataset and built a model to predict human activity type, based on data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.
+- read the dataset and explored it
+- splited the data into training, testing and validation
+- removed some unnecessary features
+- trained a model on training dataset using RandomForest
+- evaluated them on training and testing datasets, using accuracy metric.
+- Finally predicted the 20 final test observations using this model.
+
+#Background
+
+This is the course project for [Practical Machine Learning course](https://class.coursera.org/predmachlearn-015) from Johns Hopkins University on Coursera.
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+The data for this project comes from [Practical Machine Learning course](https://class.coursera.org/predmachlearn-015) from Johns Hopkins University on Coursera. 
+We have [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and a [final test](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) datasets.
+
+#Data Acquisition
+Check for training and test files and download them if necessary
+
+```{r}
+fileTrainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileTestURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if(!dir.exists("./data")){dir.create("./data")}
+if(!file.exists("./data/pml-testing.csv")){
+    downloadDate <- date()
+    download.file(fileTrainURL, destfile = "./data/pml-training.csv", method = "curl")
+}
+if(!file.exists("./data/pml-training.csv")){
+    downloadDate <- date()
+    download.file(fileTestURL, destfile = "./data/pml-testing.csv", method = "curl")
+}
+
+trainData <- read.csv("./data/pml-training.csv")
+dim(trainData)
+
+```
+
+
+##Data Partitioning
+Data set had a large number of rows.
+Decided to split it into three parts: 60% training, 20% testing and 20% validation. 
+
+```{r}
+#using caret
+library(caret)
+#partitioning data - 60, 20, 20
+set.seed(1)
+inTrain <- createDataPartition(trainData$classe, p = .8, list = FALSE)
+validation <- trainData[-inTrain, ]
+trainFull <- trainData[inTrain, ]
+inTrain <- createDataPartition(trainFull$classe, p = .75, list = FALSE)
+
+training <- trainFull[inTrain, ]
+testing <- trainFull[-inTrain, ]
+rm(trainFull)
+```
+
+#Preprocessing
+
+First removed some bookkeeping variables, and then changed facotr variables to numeric.
+
+```{r}
+#removing unrelated variables
+training <- training[, -c(1:7)]
+testing <- testing[, -c(1:7)]
+validation <- validation[, -c(1:7)]
+#str(training, list.len = 153)
+
+#changing factors to numeric
+for(i in 1:152){
+    if(class(training[, i]) == "factor"){
+        training[, i] <- as.numeric(as.factor(training[, i]))
+        testing[, i] <- as.numeric(as.factor(testing[, i]))
+        validation[, i] <- as.numeric(as.factor(validation[, i]))
+    }
+}
+#str(trainDataUsefull, list.len = 153)
+#summary(trainData$classe)
+```
+
+Then we tried to narrow these 153 variables.
+
+##Feature Selection
+
+Common functions for feature removal is nearZeroVar. This function finds the variables that have a variance near zero (one dominant value and low ratio of distinct values.)
+
+```{r}
+#removing near zero variance variables
+nzv <- nearZeroVar(training[, -153])
+length(nzv)
+trainingFiltered <- training[, -nzv]
+testingFiltered <- testing[, -nzv]
+validationFiltered <- validation[, -nzv]
+dim(trainingFiltered)
+```
+
+Some variables, that had a large (in some cases more that 97%) NA values, were removed.
+
+```{r}
+#checking for redundant variables
+excludeCols <- grep("^max|^min|^amplitude|^var|^avg|^stddev", x = names(trainingFiltered))
+trainingEx <- trainingFiltered[, -excludeCols]
+testingEx <- testingFiltered[, -excludeCols]
+validationEx <- validationFiltered[, -excludeCols]
+dim(trainingEx)
+```
+
+Using "findCorrelation" function, variables which had a high (more than 95%) correlation with other variables were removed.
+
+```{r}
+#removing correlated variables with cutoff = 0.95
+corVars <- findCorrelation(x = cor(trainingEx[, -53]), cutoff = 0.95)
+trainingExCor <- trainingEx[, -corVars]
+testingExCor <- testingEx[, -corVars]
+validationExCor <- validationEx[, -corVars]
+dim(trainingExCor)
+```
+
+
+#Model Training and Evaluation using Random Forest Model
+
+Used "doParallel" library for parallel processing since my computer had 4 cores.
+Set the method to "cv" with 10 folds cross validation for parameter tuning (with length equal to 10) and metric approximations.
+
+```{r, cache=TRUE}
+#first prediction -  RF
+#starting doParallel
+library(doParallel)
+set.seed(1)
+cl <- makeCluster(detectCores()-1)
+registerDoParallel(cl)
+tc <- trainControl(method = "cv", number = 10)
+modelFitRf <- train(classe ~ ., data = trainingExCor, method = "rf", trControl = tc, tuneLength = 10)
+stopCluster(cl)
+modelFitRf$finalModel
+
+#modelFitRf
+predictTrainRf <- predict(modelFitRf, newdata = trainingExCor)
+confusionMatrix(predictTrainRf, trainingExCor$classe)
+
+predictTestRf <- predict(modelFitRf, newdata = testingExCor)
+confusionMatrix(predictTestRf, testingExCor$classe)     
+```
+
+Random Forest model had accuracy of 1 on training data and 0.9924 on testing data. 
+
+
+
+#Final Test Set Classification
+
+predict "classe" for 20 final set observation and write them to files. We will use a funtion for writing these values to files:
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+```
+
+To make prediction on final test set, we should do the same things that we did for our trainig dataset.
+
+```{r}
+#final test
+finalTest <- read.csv(testFileCSV)
+finalTestUsefull <- finalTest[, -c(1:7)]
+finalTestFiltered <- finalTestUsefull[, -nzv]
+finalTestEx <- finalTestFiltered[, -excludeCols]
+finalTestExCor <- finalTestEx[, -corVars]
+```
+
+Then make prediction using the trained model:
+
+```{r}
+#prediction
+predictFinalTestRf <- predict(modelFitRf, newdata = finalTestExCor)
+predictFinalTestRf
+
+```
+
+Finally used the "pml_write_files" function to write these values to files:
+
+```{r}
+#write to text files
+pml_write_files(predictFinalTestComb)
+```

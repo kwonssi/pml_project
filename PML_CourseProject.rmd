@@ -177,7 +177,7 @@ To make prediction on final test set, we should do the same things that we did f
 
 ```{r}
 #final test
-finalTest <- read.csv(testFileCSV)
+finalTest <- read.csv("./data/pml-testing.csv")
 finalTestUsefull <- finalTest[, -c(1:7)]
 finalTestFiltered <- finalTestUsefull[, -nzv]
 finalTestEx <- finalTestFiltered[, -excludeCols]
@@ -197,5 +197,5 @@ Finally used the "pml_write_files" function to write these values to files:
 
 ```{r}
 #write to text files
-pml_write_files(predictFinalTestComb)
+pml_write_files(predictFinalTestRf)
 ```
